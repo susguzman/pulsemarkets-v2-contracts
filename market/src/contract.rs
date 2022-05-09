@@ -26,6 +26,8 @@ impl Market {
             dao_account_id,
             resolved: false,
             published: false,
+            losing_balance: 0,
+            winning_balance: 0,
             total_funds: 0,
             winning_options_idx: 0,
             totals_by_options_idx: LookupMap::new(StorageKeys::Totals),
@@ -162,6 +164,17 @@ impl Market {
             env::panic_str("ERR_DAO_ACCOUNT");
         }
 
+        // Calculate final balances
+        for idx in 0 .. self.market.options.len() {
+            let amount = self.deposits_by_option(&(idx as u64));
+
+            if idx as u64 == self.winning_options_idx {
+                self.winning_balance = amount;
+            } else {
+                self.losing_balance = self.losing_balance.wrapping_add(amount);
+            }
+        }
+
         self.winning_options_idx = options_idx;
         self.resolved = true;
     }
@@ -191,23 +204,11 @@ impl Market {
             env::panic_str("ERR_ACCOUNT_DID_NOT_WIN");
         }
 
-        //@CHECK These calculations could be done once at market resolve fn 
-        let mut total_losses = 0;
-        let mut total_win = 0;
-        for idx in 0 .. self.market.options.len() {
-            if idx as u64 == self.winning_options_idx {
-                total_win = self.deposits_by_option(&(idx as u64));
-            } else {
-                total_losses = total_losses + self.deposits_by_option(&(idx as u64));
-            }
-        }
-
-        let payment = total_losses * bet / total_win;
+        let payment = self.losing_balance * bet / self.winning_balance + bet;
 
         //@CHECK subtract the deposits of the player so that they can't withdraw again
         // Should we keep a record of withdrawals? If so, we need a new struct to track it.
         options_by_account.insert(&self.winning_options_idx, &0);
-
         Promise::new(payee.clone()).transfer(payment);
 
         self.total_funds = self.total_funds.wrapping_sub(payment);
